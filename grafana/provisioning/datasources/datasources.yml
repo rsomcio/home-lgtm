@@ -1,0 +1,67 @@
+# Grafana Datasource Provisioning
+# Pre-configured datasources for LGTM stack
+
+apiVersion: 1
+
+datasources:
+  # Prometheus - Metrics
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      httpMethod: POST
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: tempo
+          urlDisplayLabel: View Trace
+
+  # Loki - Logs
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    editable: false
+    jsonData:
+      derivedFields:
+        - name: TraceID
+          matcherRegex: '(?:trace_id|traceId|traceid)["\s:=]+([a-fA-F0-9]+)'
+          url: '$${__value.raw}'
+          datasourceUid: tempo
+          urlDisplayLabel: View Trace
+
+  # Tempo - Traces
+  - name: Tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    uid: tempo
+    editable: false
+    jsonData:
+      httpMethod: GET
+      tracesToLogs:
+        datasourceUid: loki
+        filterByTraceID: true
+        filterBySpanID: false
+        mapTagNamesEnabled: true
+        tags:
+          - key: service.name
+            value: service
+      tracesToMetrics:
+        datasourceUid: prometheus
+        tags:
+          - key: service.name
+            value: service
+        queries:
+          - name: Request Rate
+            query: sum(rate(traces_spanmetrics_calls_total{$$__tags}[5m]))
+          - name: Error Rate
+            query: sum(rate(traces_spanmetrics_calls_total{$$__tags,status_code="STATUS_CODE_ERROR"}[5m]))
+      serviceMap:
+        datasourceUid: prometheus
+      nodeGraph:
+        enabled: true
+      lokiSearch:
+        datasourceUid: loki

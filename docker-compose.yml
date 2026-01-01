@@ -1,0 +1,219 @@
+# LGTM Stack for Raspberry Pi 5 (8GB RAM)
+# Loki (Logs) + Grafana + Tempo (Traces) + Prometheus (Metrics)
+
+networks:
+  lgtm:
+    driver: bridge
+
+volumes:
+  grafana-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/lgtm/grafana
+  prometheus-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/lgtm/prometheus
+  loki-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/lgtm/loki
+  tempo-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/lgtm/tempo
+
+services:
+  # ===========================================
+  # Grafana - Visualization & Dashboards
+  # ===========================================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://localhost:3000
+      - GF_FEATURE_TOGGLES_ENABLE=traceqlEditor
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    networks:
+      - lgtm
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ===========================================
+  # Prometheus - Metrics Collection & Storage
+  # ===========================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--storage.tsdb.retention.size=50GB'
+      - '--web.enable-lifecycle'
+      - '--web.enable-remote-write-receiver'
+      - '--enable-feature=exemplar-storage'
+      - '--enable-feature=native-histograms'
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    networks:
+      - lgtm
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+        reservations:
+          memory: 512M
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9090/-/healthy || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ===========================================
+  # Loki - Log Aggregation
+  # ===========================================
+  loki:
+    image: grafana/loki:latest
+    container_name: loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/loki-config.yml
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki-data:/loki
+    networks:
+      - lgtm
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+        reservations:
+          memory: 256M
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3100/ready || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ===========================================
+  # Tempo - Distributed Tracing
+  # ===========================================
+  tempo:
+    image: grafana/tempo:latest
+    container_name: tempo
+    restart: unless-stopped
+    command: -config.file=/etc/tempo/tempo-config.yml
+    ports:
+      - "3200:3200"   # Tempo HTTP
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "9411:9411"   # Zipkin
+    volumes:
+      - ./tempo/tempo-config.yml:/etc/tempo/tempo-config.yml:ro
+      - tempo-data:/var/tempo
+    networks:
+      - lgtm
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+        reservations:
+          memory: 256M
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3200/ready || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ===========================================
+  # OpenTelemetry Collector - Unified Ingestion
+  # ===========================================
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: otel-collector
+    restart: unless-stopped
+    command: --config=/etc/otelcol/config.yml
+    ports:
+      - "4316:4317"   # OTLP gRPC (external, maps to internal 4317)
+      - "4319:4318"   # OTLP HTTP (external, for apps sending to collector)
+      - "8888:8888"   # Prometheus metrics exposed by the collector
+      - "8889:8889"   # Prometheus exporter metrics
+      - "13133:13133" # Health check
+    volumes:
+      - ./otel-collector/config.yml:/etc/otelcol/config.yml:ro
+    networks:
+      - lgtm
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:13133/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ===========================================
+  # Promtail - Log Shipper (for local Docker logs)
+  # ===========================================
+  promtail:
+    image: grafana/promtail:latest
+    container_name: promtail
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/promtail-config.yml
+    volumes:
+      - ./promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    networks:
+      - lgtm
+    depends_on:
+      - loki
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M

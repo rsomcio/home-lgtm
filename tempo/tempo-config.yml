@@ -1,0 +1,78 @@
+# Tempo Configuration for Raspberry Pi 5
+# Optimized for low memory usage with 30-day retention
+
+server:
+  http_listen_port: 3200
+  grpc_listen_port: 9095
+  log_level: warn
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+    zipkin:
+      endpoint: 0.0.0.0:9411
+    jaeger:
+      protocols:
+        thrift_http:
+          endpoint: 0.0.0.0:14268
+        grpc:
+          endpoint: 0.0.0.0:14250
+
+ingester:
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    block_retention: 720h  # 30 days
+
+metrics_generator:
+  registry:
+    external_labels:
+      source: tempo
+      cluster: homelab
+  storage:
+    path: /var/tempo/generator/wal
+    remote_write:
+      - url: http://prometheus:9090/api/v1/write
+        send_exemplars: true
+
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /var/tempo/wal
+    local:
+      path: /var/tempo/blocks
+    block:
+      bloom_filter_false_positive: 0.05
+      v2_index_downsample_bytes: 1000
+      v2_encoding: zstd
+
+querier:
+  search:
+    external_hedge_requests_at: 8s
+    external_hedge_requests_up_to: 2
+  frontend_worker:
+    frontend_address: 127.0.0.1:9095
+
+query_frontend:
+  search:
+    duration_slo: 5s
+    throughput_bytes_slo: 1.073741824e+09
+  trace_by_id:
+    duration_slo: 5s
+
+overrides:
+  defaults:
+    metrics_generator:
+      processors:
+        - service-graphs
+        - span-metrics
+
+usage_report:
+  reporting_enabled: false
