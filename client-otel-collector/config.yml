@@ -87,9 +87,9 @@ processors:
         action: insert
 
 exporters:
-  # Send to LGTM stack via OTLP
-  otlphttp:
-    endpoint: http://<LGTM_HOST>:4319
+  # Send to LGTM stack via OTLP gRPC
+  otlp:
+    endpoint: <LGTM_HOST>:4316
     tls:
       insecure: true
 
@@ -111,19 +111,19 @@ service:
     metrics:
       receivers: [hostmetrics, prometheus, otlp]
       processors: [memory_limiter, resourcedetection, resource, batch]
-      exporters: [otlphttp, debug]
+      exporters: [otlp, debug]
 
     # Traces pipeline (for application traces)
     traces:
       receivers: [otlp]
       processors: [memory_limiter, resourcedetection, resource, batch]
-      exporters: [otlphttp, debug]
+      exporters: [otlp, debug]
 
     # Logs pipeline (for application logs)
     logs:
       receivers: [otlp]
       processors: [memory_limiter, resourcedetection, resource, batch]
-      exporters: [otlphttp, debug]
+      exporters: [otlp, debug]
 
   telemetry:
     logs:
