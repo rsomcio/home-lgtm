@@ -50,13 +50,9 @@ storage:
       path: /var/tempo/blocks
     block:
       bloom_filter_false_positive: 0.05
-      v2_index_downsample_bytes: 1000
       v2_encoding: zstd
 
 querier:
-  search:
-    external_hedge_requests_at: 8s
-    external_hedge_requests_up_to: 2
   frontend_worker:
     frontend_address: 127.0.0.1:9095
 
